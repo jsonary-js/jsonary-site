@@ -1,0 +1,20 @@
+{
+	"title": "Website page",
+	"type": "object",
+	"properties": {
+		"name": {"type": "string", "readOnly": true},
+		"title": {"type": "string"},
+		"content": {"$ref": "demo-code#/definitions/array"}
+	},
+	"required": ["name", "title", "content"],
+	"links": [
+		{
+			"rel": "self",
+			"href": "/json/pages/{name}"
+		},
+		{
+			"rel": "edit",
+			"href": ""
+		}
+	]
+}
