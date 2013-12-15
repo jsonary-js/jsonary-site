@@ -1,10 +1,10 @@
-/* Bundled on 2013-12-07 */
+/* Bundled on 2013-12-14 */
 (function() {
 
 
 /**** jsonary-core.js ****/
 
-	/* Bundled on 2013-12-06 */
+	/* Bundled on 2013-12-14 */
 	(function() {
 	/* Copyright (C) 2012-2013 Geraint Luff
 	
@@ -2028,6 +2028,7 @@
 			
 			this.baseUrl = request.url;
 			this.fragment = fragment;
+			this.document = request.document;
 			if (fragment == null) {
 				fragment = "";
 			}
@@ -4469,13 +4470,18 @@
 				}
 				var hrefBase = this.hrefBase;
 				var submissionSchemas = this.submissionSchemas.getFull();
-				if (callback && submissionSchemas.length == 0 && this.method == "PUT") {
+				if (callback && !origData && submissionSchemas.length == 0 && this.method == "PUT") {
+					var readOnlySchema = Jsonary.createSchema({readOnly: true});
+					var resultData = Jsonary.create('...').addSchema(readOnlySchema, 'tmp');
 					Jsonary.getData(this.href, function (data) {
+						resultData.removeSchema('tmp');
+						resultData.set(data.get());
+						resultData.addSchema(data.schemas().fixed());
 						if (typeof callback === 'function') {
-							callback(origData || data.editableCopy());
+							callback(resultData);
 						}
 					});
-					return this;
+					return resultData;
 				}
 				var baseUri = (publicApi.isData(origData) && origData.resolveUrl('')) || hrefBase;
 				return submissionSchemas.createData(origData, baseUri, callback);
@@ -7303,14 +7309,20 @@
 				return str.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;").replace("'", "&#39;");
 			}
 		
+			var fixScrollActive = false;
 			function fixScroll(execFunction) {
+				if (fixScrollActive) return execFunction();
+				fixScrollActive = true;
 				var doc = document.documentElement, body = document.body;
 				var left = (doc && doc.scrollLeft || body && body.scrollLeft || 0);
 				var top = (doc && doc.scrollTop  || body && body.scrollTop  || 0);
 				execFunction();
-				if (left || top) {
-					window.scrollTo(left, top);
-				}
+				setTimeout(function () {
+					if (left || top) {
+						window.scrollTo(left, top);
+					}
+					fixScrollActive = false;
+				}, 10);
 			}
 		
 			var prefixPrefix = "Jsonary";
@@ -8129,6 +8141,16 @@
 				pageContext.subContexts = {};
 				return '<span class="jsonary">' + innerHtml + '</span>';
 			}
+			function enhanceElement(element) {
+				if (typeof element === 'string') {
+					var elementId = element;
+					element = render.getElementById(elementId);
+					if (!element) {
+						throw new Error('Element not found: ' + elementId)
+					}
+				}
+				pageContext.enhanceElement(element);
+			}
 			function renderValue(target, startingValue, schema, updateFunction) {
 				if (typeof updateFunction === 'string') {
 					var element = document.getElementById(updateFunction) || document.getElementsByName(updateFunction)[0];
@@ -8754,8 +8776,9 @@
 			Jsonary.extend({
 				render: render,
 				renderHtml: renderHtml,
+				enhance: enhanceElement,
 				renderValue: renderValue,
-				asyncRenderHtml: asyncRenderHtml
+				asyncRenderHtml: asyncRenderHtml,
 			});
 			Jsonary.extendData({
 				renderTo: function (element, uiState) {
@@ -9178,22 +9201,20 @@
 				},
 				action: function (context, actionName, arg1) {
 					if (actionName == "follow-link") {
-						var link = context.data.links()[arg1];
+						var data = context.data;
+						var link = data.links()[arg1];
 						if (link.method == "GET" && link.submissionSchemas.length == 0) {
 							// There's no data to prompt for, and GET links are safe, so we don't put up a dialog
 							link.follow();
 							return false;
 						}
 						context.uiState.submitLink = arg1;
-						if (link.method == "PUT" && link.submissionSchemas.length == 0) {
-							// TODO: editable copy of actual target?
-							context.uiState.editing = context.data.editableCopy();
-							context.uiState.submissionData = context.data.editableCopy();
-						} else {
-							context.uiState.submissionData = link.createSubmissionData(undefined, true);
-						}
+						context.uiState.submissionData = link.createSubmissionData(undefined, true);
 						if (link.method == "PUT") {
-							context.uiState.editInPlace = true;
+							var dataUrl = (data.getLink('self') && data.getLink('self').href) || data.referenceUrl() || '';
+							if (link.href.replace(/#$/, '') === dataUrl.replace(/#$/, '')) {
+								context.uiState.editInPlace = true;
+							}
 						}
 						return true;
 					} else if (actionName == "submit") {
@@ -10126,6 +10147,60 @@
 		
 		})(this);
 		
+	
+	/**** string-formats.js ****/
+	
+		(function () {
+			// Display string
+			Jsonary.render.register({
+				renderHtml: function (data, context) {
+					var date = new Date(data.value());
+					if (isNaN(date.getTime())) {
+						return '<span class="json-string json-string-date">' + Jsonary.escapeHtml(data.value()) + '</span>';
+					} else {
+						return '<span class="json-string json-string-date">' + date.toLocaleString() + '</span>';
+					}
+				},
+				filter: {
+					type: 'string',
+					readOnly: true,
+					filter: function (data, schemas) {
+						return schemas.formats().indexOf("date-time") != -1;
+					}
+				}
+			});
+			
+			// Display string
+			Jsonary.render.register({
+				renderHtml: function (data, context) {
+					if (data.readOnly()) {
+						if (context.uiState.showPassword) {
+							return Jsonary.escapeHtml(data.value());
+						} else {
+							return context.actionHtml('(show password)', 'show-password');
+						}
+					} else {
+						var inputName = context.inputNameForAction('update');
+						return '<input type="password" name="' + inputName + '" value="' + Jsonary.escapeHtml(data.value()) + '"></input>';
+					}
+				},
+				action: function (context, actionName, arg1) {
+					if (actionName == "show-password") {
+						context.uiState.showPassword = true;
+						return true;
+					} else if (actionName == "update") {
+						context.data.setValue(arg1);
+					}
+				},
+				filter: {
+					type: 'string',
+					filter: function (data, schemas) {
+						return schemas.formats().indexOf("password") != -1;
+					}
+				}
+			});
+		})();
+		
 	return this;
 	}).call(this);var Jsonary = this.Jsonary;
 
@@ -10304,6 +10379,244 @@
 		update();
 	})(this);
 	
+
+/**** jsonary.route.js ****/
+
+	(function (Jsonary) {
+		if (typeof window === 'undefined') {
+			return;
+		}
+	
+		function Route(templateStr, handlerFunction) {
+			this.template = Jsonary.UriTemplate(templateStr);
+			this.templateString = templateStr;
+			this.run = handlerFunction;
+		}
+		Route.prototype = {
+			test: function (url) {
+				var params = this.template.fromUri(url);
+				if (params && this.template.fillFromObject(params) === url) {
+					return params;
+				}
+			},
+			url: function (params) {
+				return this.template.fillFromObject(params);
+			}
+		};
+		
+		function getCurrent() {
+			return Jsonary.location.base.replace(/^[^:]*:\/\/[^/]*/, '').replace(/[?#].*$/, '');
+		}
+	
+		var routes = [];
+		var extraData = {};
+		function runRoutes() {
+			var url = getCurrent(), query = Jsonary.location.query;
+			var params;
+			for (var i = 0; i < routes.length; i++) {
+				var route = routes[i];
+				if (params = route.test(url)) {
+					var result = route.run(params, query, extraData);
+					if (result !== false) {
+						return; 
+					}
+				}
+			}
+		}
+		var pending = false;
+		function runRoutesLater() {
+			extraData = {};
+			if (pending) return;
+			pending = true;
+			setTimeout(function () {
+				pending = false;
+				runRoutes();
+			}, 25);
+		}
+	
+		var locationMonitor = Jsonary.location.onChange(runRoutesLater, false);
+	
+		var api = Jsonary.route = function (template, handler) {
+			var route = new Route(template, handler);
+			routes.push(route);
+			runRoutesLater();
+			return route;
+		};
+		api.shortUrl = function (url) {
+			var shortUrl = url.replace(/#$/, "");
+			var urlBase = Jsonary.baseUri;
+			if (url.substring(0, urlBase.length) == urlBase) {
+				shortUrl = url.substring(urlBase.length) || "./";
+			}
+			return shortUrl;
+		};
+		api.set = function (path, query, extra) {
+			query = query ||Jsonary.location.query.get();
+			var newHref = (path || '').replace(/\?$/, '');
+			if (Object.keys(query).length) {
+				newHref += (newHref.indexOf('?') !== -1) ? '&' : '?';
+				newHref += Jsonary.encodeData(query, 'application/x-www-form-urlencoded', Jsonary.location.queryVariant);
+			}
+			Jsonary.location.replace(newHref);
+			extraData = extra || {};
+		};
+	
+	})(Jsonary);
+
+/**** jsonary.popup.js ****/
+
+	if (typeof window !== 'undefined') {
+		function escapeHtml(text) {
+			text += "";
+			return text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/'/g, "&#39;").replace(/"/g, "&quot;");
+		}
+		
+		(function (window) {
+			function copyStyle(oldDoc, newDoc) {
+				var links = oldDoc.getElementsByTagName('link');
+				for (var i = 0; i < links.length; i++) {
+					var oldElement = links[i];
+					newDoc.write('<link href="' + escapeHtml(oldElement.href) + '" rel="' + escapeHtml(oldElement.rel || "") + '">');
+				}
+				var styles = oldDoc.getElementsByTagName('style');
+				for (var i = 0; i < styles.length; i++) {
+					var oldElement = styles[i];
+					newDoc.write('<style>' + oldElement.innerHTML + '</style>');
+				}
+			}
+	
+			var scriptConditions = [];
+			function shouldIncludeScript(url) {
+				for (var i = 0; i < scriptConditions.length; i++) {
+					if (scriptConditions[i].call(null, url)) {
+						return true;
+					}
+				}
+				return false;
+			}
+			
+			function copyScripts(oldDoc, newDoc) {
+				var scripts = oldDoc.getElementsByTagName('script');
+				for (var i = 0; i < scripts.length; i++) {
+					var oldElement = scripts[i];
+					if (oldElement.src && shouldIncludeScript(oldElement.src)) {
+						newDoc.write('<script src="' + escapeHtml(oldElement.src) + '"></script>');
+					}
+				}
+			}
+			
+			var setupFunctions = [];
+			var preSetupFunctions = [];
+			
+			Jsonary.popup = function (params, title, openCallback, closeCallback, closeWithParent) {
+				if (closeWithParent === undefined) {
+					closeWithParent = true;
+				}
+				if (typeof params === 'object') {
+					var newParams = [];
+					for (var key in params) {
+						if (typeof params[key] == 'boolean') {
+							newParams.push(key + '=' + (params[key] ? 'yes' : 'no'));
+						} else {
+							newParams.push(key + '=' + params[key]);
+						}
+					}
+					params = newParams.join(',');
+				}
+				var subWindow = window.open(null, null, params);
+				subWindow.document.open();
+				subWindow.document.write('<html><head><title>' + escapeHtml(title || "Popup") + '</title>');
+				copyStyle(window.document, subWindow.document);
+				copyScripts(window.document, subWindow.document);
+				subWindow.document.write('</head><body class="jsonary popup"></body></html>');
+				subWindow.document.close();
+				Jsonary.render.addDocument(subWindow.document);
+				
+				var parentBeforeUnloadListener = function (evt) {
+					if (closeWithParent) {
+						subWindow.close();
+					}
+					Jsonary.render.removeDocument(window.document);
+				};
+				var beforeUnloadListener = function (evt) {
+					evt = evt || window.event;
+					Jsonary.render.removeDocument(subWindow.document);
+					// Remove parent's unload listener, as that will leak the sub-window (including the entire document tree)
+					if (window.removeEventListener) {
+						window.removeEventListener('beforeunload', parentBeforeUnloadListener, false);
+					} else if (window.detachEvent) {
+						window.detachEvent('onbeforeunload', parentBeforeUnloadListener);
+					}
+					if (closeCallback) {
+						var result = closeCallback(evt);
+						if (evt) {
+							evt.returnValue = result;
+						}
+						return result;
+					}
+				}
+				var onLoadListener = function (evt) {
+					evt = evt || window.event;
+					for (var i = 0; i < setupFunctions.length; i++) {
+						setupFunctions[i].call(subWindow.window, subWindow.window, subWindow.document);
+					}
+					if (openCallback) {
+						return openCallback.call(subWindow.window, subWindow.window, subWindow.document);
+					}
+				};
+				if (subWindow.addEventListener) {
+					subWindow.addEventListener('load', onLoadListener, false); 
+					subWindow.addEventListener('beforeunload', beforeUnloadListener, false); 
+					window.addEventListener('beforeunload', parentBeforeUnloadListener, false);
+				} else if (subWindow.attachEvent)  {
+					subWindow.attachEvent('onload', onLoadListener);
+					subWindow.attachEvent('onbeforeunload', beforeUnloadListener);
+					window.attachEvent('onbeforeunload', parentBeforeUnloadListener);
+				}
+				
+				for (var i = 0; i < preSetupFunctions.length; i++) {
+					preSetupFunctions[i].call(subWindow.window, subWindow.window);
+				}
+	
+				return subWindow;
+			};
+			
+			Jsonary.popup.addScripts = function (scripts) {
+				if (typeof scripts == 'boolean') {
+					scriptConditions.push(function () {
+						return scripts;
+					});
+				}
+				if (typeof scripts == 'function') {
+					scriptConditions.push(scripts);
+				}
+				for (var i = 0; i < scripts.length; i++) {
+					(function (search) {
+						if (search instanceof RegExp) {
+							scriptConditions.push(function (url) {
+								return search.test(url);
+							});
+						} else {
+							scriptConditions.push(function (url) {
+								return url.indexOf('search') !== -1;
+							});
+						}
+					})(scripts[i]);
+				}
+				return this;
+			};
+			
+			Jsonary.popup.addPreSetup = function (callback) {
+				preSetupFunctions.push(callback);
+				return this;
+			};
+	
+			Jsonary.popup.addSetup = function (callback) {
+				setupFunctions.push(callback);
+				return this;
+			};
+		})(window);
+	}
 
 /**** jsonary.undo.js ****/
 
@@ -11406,17 +11719,13 @@
 					if (link.submissionSchemas.length) {
 						context.uiState.linkRel = linkRel;
 						context.uiState.linkIndex = linkIndex;
-						var linkData = Jsonary.create();
-						linkData.addSchema(link.submissionSchemas);
+						var linkData = link.createSubmissionData(undefined, true);
 						context.uiState.linkData = linkData;
 						if (subPath) {
 							context.uiState.linkPath = subPath;
 						} else {
 							delete context.uiState.linkPath;
 						}
-						link.submissionSchemas.createValue(function (value) {
-							linkData.setValue(value);
-						});
 						delete context.uiState.expand;
 					} else if (link.rel == "edit") {
 						context.uiState.linkRel = linkRel;
@@ -11439,6 +11748,10 @@
 						delete context.uiState.linkData;
 						delete context.uiState.expand;
 					} else {
+						/*
+						link.follow();
+						return;
+						*/
 						var targetExpand = (link.rel == "self") ? true : link.href;
 						if (context.uiState.expand == targetExpand) {
 							delete context.uiState.expand;
@@ -11553,66 +11866,12 @@
 	
 	})(Jsonary);
 
-/**** string-formats.js ****/
-
-	(function () {
-		// Display string
-		Jsonary.render.register({
-			renderHtml: function (data, context) {
-				var date = new Date(data.value());
-				if (isNaN(date.getTime())) {
-					return '<span class="json-string json-string-date">' + Jsonary.escapeHtml(data.value()) + '</span>';
-				} else {
-					return '<span class="json-string json-string-date">' + date.toLocaleString() + '</span>';
-				}
-			},
-			filter: {
-				type: 'string',
-				readOnly: true,
-				filter: function (data, schemas) {
-					return schemas.formats().indexOf("date-time") != -1;
-				}
-			}
-		});
-		
-		// Display string
-		Jsonary.render.register({
-			renderHtml: function (data, context) {
-				if (data.readOnly()) {
-					if (context.uiState.showPassword) {
-						return Jsonary.escapeHtml(data.value());
-					} else {
-						return context.actionHtml('(show password)', 'show-password');
-					}
-				} else {
-					var inputName = context.inputNameForAction('update');
-					return '<input type="password" name="' + inputName + '" value="' + Jsonary.escapeHtml(data.value()) + '"></input>';
-				}
-			},
-			action: function (context, actionName, arg1) {
-				if (actionName == "show-password") {
-					context.uiState.showPassword = true;
-					return true;
-				} else if (actionName == "update") {
-					context.data.setValue(arg1);
-				}
-			},
-			filter: {
-				type: 'string',
-				filter: function (data, schemas) {
-					return schemas.formats().indexOf("password") != -1;
-				}
-			}
-		});
-	})();
-	
-
 /**** full-preview.js ****/
 
 	Jsonary.render.register({
 		component: [Jsonary.render.Components.LIST_LINKS],
 		renderHtml: function (data, context) {
-			var previewLink = data.getLink('full-preview');
+			var previewLink = data.getLink('preview') || data.getLink('full-preview');
 			var innerHtml = context.renderHtml(previewLink.follow(null, false));
 			return context.actionHtml(innerHtml, 'full');
 		},
@@ -11624,18 +11883,18 @@
 			}
 		},
 		filter: function (data, schemas) {
-			return data.readOnly() && data.getLink('full') && data.getLink('full-preview');
+			return data.readOnly() && data.getLink('full') && (data.getLink('preview') || data.getLink('full-preview'));
 		}
 	});
 	
 	Jsonary.render.register({
 		component: [Jsonary.render.Components.LIST_LINKS],
 		renderHtml: function (data, context) {
-			var previewLink = data.getLink('full-preview');
+			var previewLink = data.getLink('preview') || data.getLink('full-preview');
 			return context.renderHtml(data) + " - " + context.renderHtml(previewLink.follow(null, false));
 		},
 		filter: function (data, schemas) {
-			return !data.readOnly() && data.getLink('full') && data.getLink('full-preview');
+			return !data.readOnly() && data.getLink('full') && (data.getLink('preview') || data.getLink('full-preview'));
 		}
 	});
 
@@ -11880,6 +12139,186 @@
 			return displayAsTable;
 		}
 	});
+
+/**** tag-list.js ****/
+
+	Jsonary.render.register({
+		renderHtml: function (data, context) {
+			var enums = data.schemas().enumDataList();
+			var result = '<div class="json-tag-list">';
+			result += '<div class="json-tag-list-current">';
+			data.items(function (index, item) {
+				result += '<span class="json-tag-list-entry">';
+				if (!data.readOnly()) {
+					result += '<span class="json-array-delete-container">';
+					result += context.actionHtml('<span class="json-array-delete">X</span>', 'remove', index);
+					result += context.renderHtml(item.readOnlyCopy(), 'current' + index) + '</span>';
+					result += '</span>';
+				} else {
+					result += context.renderHtml(item.readOnlyCopy(), 'current' + index) + '</span>';
+				}
+			});
+			result += '</div>';
+			if (!data.readOnly()) {
+				result += '<div class="json-tag-list-add">';
+				result += context.actionHtml('<span class="button">add</span>', 'add');
+				if (!context.uiState.addData) {
+					var undefinedItem = data.item(data.length());
+					var itemSchema = undefinedItem.schemas(true);
+					context.uiState.addData = itemSchema.createData(undefinedItem, true);
+				}
+				result += context.withoutComponent('LIST_LINKS').renderHtml(context.uiState.addData, 'add');
+				result += '</div>';
+			}
+			return result + '</div>';
+		},
+		action: {
+			add: function (data, context) {
+				var addData = context.uiState.addData;
+				if (data.schemas().uniqueItems()) {
+					for (var i = 0; i < data.length(); i++) {
+						if (data.item(i).equals(addData)) {
+							return false;
+						}
+					}
+				}
+				data.item(data.length()).setValue(addData.value());
+			},
+			remove: function (data, context, index) {
+				data.item(index).remove();
+			}
+		},
+		filter: {
+			type: 'array',
+			filter: function (data, schemas) {
+				return schemas.unordered();
+			}
+		}
+	});
+
+/**** image-picker.js ****/
+
+	// Fancy image-picker with HTML5
+	if (typeof FileReader === 'function') {
+		Jsonary.render.register({
+			component: Jsonary.render.Components.ADD_REMOVE,
+			renderHtml: function (data, context) {
+				if (data.defined()) {
+					var mediaType = null;
+					data.schemas().each(function (index, schema) {
+						if (/^image/.test(schema.data.get('/media/type'))) {
+							mediaType = schema.data.get('/media/type');
+						}
+					});
+					var dataUrl = 'data:;base64,' + data.value();
+					var result = '<div class="json-object-delete-container">';
+					if (!data.readOnly()) {
+						result += context.actionHtml('<span class="json-object-delete">X</span>', 'remove');
+					}
+					result += '<div class="base64-image-preview"><img src="' + Jsonary.escapeHtml(dataUrl) + '"></div>';
+					result += '</div>';
+					return result;
+				} else if (context.uiState.warning) {
+					return '<div class="base64-image-warning warning">' + Jsonary.escapeHtml(context.uiState.warning) + '"</div>';
+				} else {
+					return '<div class="base64-image-placeholder"></div>';
+				}
+			},
+			action: {
+				remove: function (data, context) {
+					data.remove();
+				}
+			},
+			render: function (element, data, context) {
+				if (data.readOnly()) {
+					return;
+				}
+				function handleFileSelect(files) {
+					// files is a FileList of File objects. List some properties.
+					var output = [];
+					if (files.length) {
+						var firstFile = files[0];
+						if (!firstFile.type.match('image.*')) {
+							return;
+						}
+						var reader = new FileReader();
+	
+						reader.onload = function(loadEvent) {
+							delete context.uiState.warning;
+							var dataUrl = loadEvent.target.result;
+							var remainder = dataUrl.substring(5);
+							var mediaType = remainder.split(';', 1)[0];
+							remainder = remainder.substring(mediaType.length + 1);
+							var binaryEncoding = remainder.split(',', 1)[0];
+							remainder = remainder.substring(binaryEncoding.length + 1);
+							if (binaryEncoding !== 'base64') {
+								context.uiState.warning = "Data URL is not base64";
+								Jsonary.log(Jsonary.logLevel.ERROR, 'Data URL is not base64');
+								return context.rerender();
+							} else if (!/^image\//.test(mediaType)) {
+								context.uiState.warning = "File must be an image";
+								Jsonary.log(Jsonary.logLevel.ERROR, 'Data is not an image');
+								return context.rerender();
+							}
+							data.setValue(remainder);
+						};
+	
+						reader.readAsDataURL(firstFile);
+					}
+				}
+				
+				var mediaType = null;
+				data.schemas().each(function (index, schema) {
+					if (/^image/.test(schema.data.get('/media/type'))) {
+						mediaType = schema.data.get('/media/type');
+					}
+				});
+	
+				var input = document.createElement('input');
+				input.setAttribute('type', 'file');
+				input.setAttribute('accept', mediaType || 'image/*');
+				input.onchange = function (evt) {
+					var files = evt.target.files; // FileList object
+					handleFileSelect(files);
+				};
+				
+				var firstElement = null;
+				for (var i = 0; i < element.childNodes.length; i++) {
+					if (element.childNodes[i].nodeType === 1) {
+						firstElement = element.childNodes[i];
+					}
+				}
+				firstElement.addEventListener("dragover", function (e) {
+					e.preventDefault();
+				}, true);
+				firstElement.addEventListener("dragenter", function (e) {
+					firstElement.className += " drag-hover";
+				});
+				firstElement.addEventListener("dragleave", function (e) {
+					firstElement.className = firstElement.className.replace(/(^| )drag-hover($| )/g, ' ');
+				});
+				firstElement.addEventListener("drop", function (e) {
+					e.preventDefault(); 
+					window.evt = e;
+					console.log(e);
+					var files = e.dataTransfer.files;
+					handleFileSelect(files);
+				}, true);
+				
+				element.appendChild(input);
+			},
+			filter: {
+				type: ['string', undefined],
+				filter: function (data) {
+					var schemas = data.schemas(true); // force search for potential future schemas
+					return schemas.any(function (index, schema) {
+						return (schema.data.get('/media/binaryEncoding') || "").toLowerCase() == 'base64'
+							&& /^image\//.test(schema.data.get('/media/type'));
+					});
+				}
+			}
+		});
+	}
 
 /**** site.js ****/
 

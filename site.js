@@ -3,7 +3,7 @@ var url = require('url');
 var http = require('http');
 var https = require('https');
 var path = require('path');
-var jsonaryBundle = require('../node-package/jsonary-bundle');
+var jsonaryBundle = require('jsonary');
 var prettyJson = require('./prettyJson');
 
 var classes = require('./classes.js');
@@ -14,17 +14,7 @@ app.use(express.bodyParser());
 
 var jsonaryJsBundle;
 function createBundles() {
-	var bundle = jsonaryBundle.fresh().addPath(__dirname);
-	// extra plugins and renderers
-	bundle.add('../plugins/jsonary.location');
-	bundle.add('../plugins/jsonary.undo');
-	bundle.add('../plugins/jsonary.jstl');
-	bundle.add('../plugins/jsonary.render.table');
-	bundle.add('../plugins/jsonary.render.generate');
-	bundle.add('../renderers/string-formats');
-	bundle.add('../renderers/contributed/full-preview');
-	bundle.add('../renderers/contributed/full-instances');
-	bundle.add('../renderers/contributed/adaptive-table');
+	var bundle = jsonaryBundle.superBundle().addPath(__dirname);
 
 	// Site-specific renderers
 	bundle.add('renderers/site');
