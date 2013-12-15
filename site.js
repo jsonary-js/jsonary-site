@@ -73,7 +73,7 @@ app.get('/json/pages/', function (request, response, next) {
 });
 
 app.get('/json/pages/:name', function (request, response, next) {
-	var timer = LogTimer('json - get page');
+	var timer = LogTimer('json ' + request.path);
 	var cached = classes.cacheWithPool(mysqlPool);
 	
 	cached.Page.open(request.params.name, function (err, result) {
@@ -129,7 +129,6 @@ app.put('/json/pages/:name', function (request, response, next) {
 });
 
 app.use('/json/schemas/', function (request, response, next) {
-	console.log('schema: ' + request.url);
 	response.set('Content-Type', 'application/json');
 	response.links({
 		describedby: "http://json-schema.org/hyper-schema"
@@ -251,7 +250,7 @@ app.use('/', function (request, response, next) {
 		 && request.path.substring(0, 5) !== '/api/') {
 		return next();
 	}
-	var timer = LogTimer('page');
+	var timer = LogTimer('page ' + request.path);
 	
 	response.setHeader('Content-Type', 'text/html');
 	var baseUri = url.format({
@@ -260,7 +259,6 @@ app.use('/', function (request, response, next) {
 		port: (!HIDE_PORT && SERVER_PORT != 80) ? SERVER_PORT : null,
 		pathname: '/'
 	});
-	console.log(baseUri);
 	var Jsonary = jsonaryJsBundle.instance(baseUri, 'Jsonary');
 	timer.event('create Jsonary');
 
