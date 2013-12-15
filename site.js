@@ -226,7 +226,7 @@ app.use('/json/', function (request, response) {
 
 app.use('/', express.static(__dirname + "/public"));
 app.use('/get-started.zip', function (request, response) {
-	response.sendfile(path.join(__dirname, '../get-started.zip'));
+	response.sendfile(path.join(__dirname, 'get-started.zip'));
 });
 
 app.get('/test', function (request, response) {
